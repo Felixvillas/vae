@@ -3,12 +3,13 @@ import numpy as np
 from PIL import Image
 import torchvision
 from torchvision import datasets
+from tqdm import *
 
 from vae import VAE
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device('cpu')
 batch_size = 128
-epochs = 5000
+epochs = 500
 seed = 0
 test_batch_size = 256
 
@@ -38,9 +39,19 @@ if __name__ == "__main__":
     # train
     Vae.train()
     for ep in range(epochs):
-        indexs = np.random.choice(train_num, batch_size, replace=False)
-        loss, loss_kl = Vae.update(x_train[indexs])
-        print(f"Epoch: {ep} | Loss: {loss} | Loss_Kl: {loss_kl}")
+        losses = 0
+        losses_kl = 0
+        loss_num = 0
+        print(f"===================================EPOCH: {ep}===================================")
+        for i in range(0, train_num, batch_size):
+            indexs = list(range(i , i + batch_size)) if i + batch_size <= train_num else list(range(i , train_num))
+            loss, loss_kl = Vae.update(x_train[indexs])
+            losses += loss
+            losses_kl += loss_kl
+            loss_num += 1
+        
+        print(f"Epoch: {ep} | Loss: {losses / loss_num} | Loss_Kl: {losses_kl / loss_num}")
+
 
     # test
     Vae.eval()

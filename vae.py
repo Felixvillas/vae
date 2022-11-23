@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.optim import Adam
 import numpy as np
 
+from torch.nn.utils.convert_parameters import parameters_to_vector
+from utils import vector_to_parameters, maml_clip_grad_norm_
 class VAE(nn.Module):
     def __init__(self, input_dim, hidden_size, output_dim, device=torch.device('cpu')) -> None:
         super(VAE, self).__init__()
@@ -26,6 +28,7 @@ class VAE(nn.Module):
         )
 
         self.optimizer = Adam(self.parameters(), lr=3e-4)
+        # self.lr = 1e-2
 
         self.to(device)
     
@@ -99,12 +102,22 @@ class VAE(nn.Module):
         optimize model
         x: (batch_size, input_dim)
         '''
+        # old_etheta = parameters_to_vector(self.encoder.parameters())
+        # old_dtheta = parameters_to_vector(self.decoder.parameters())
         x = self.check(x)
         z, mus, sigmas = self.encode(x)
         x_re = self.decode(z)
         loss_re = torch.mean(torch.sum((x_re - x) ** 2, dim=-1), dim=0)
         loss_kl = self.kl_loss(mus, sigmas)
         loss = loss_re + loss_kl
+        # grad_encoder = torch.autograd.grad(loss, self.encoder.parameters(), retain_graph=True)
+        # grad_encoder_vector = parameters_to_vector(grad_encoder)
+        # new_etheta = old_etheta - self.lr * grad_encoder_vector
+        # grad_decoder = torch.autograd.grad(loss, self.decoder.parameters(), retain_graph=True)
+        # grad_decoder_vector = parameters_to_vector(grad_decoder)
+        # new_dtheta = old_dtheta - self.lr * grad_decoder_vector
+        # vector_to_parameters(new_etheta, self.encoder.parameters())
+        # vector_to_parameters(new_dtheta, self.decoder.parameters())
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
