@@ -8,7 +8,7 @@ from torch.nn.utils.convert_parameters import parameters_to_vector
 from vae import VAE
 from utils import vector_to_parameters, maml_clip_grad_norm_
 
-class MAML_VAE(VAE):
+class My_MAML_VAE(VAE):
     def __init__(
         self, 
         input_dim, 
@@ -133,125 +133,8 @@ class MAML_VAE(VAE):
         inner_loss_re, inner_loss_kl = self.inner_update(inner_xs)
         outer_loss_re, outer_loss_kl = self.outer_update(outer_xs)
         return inner_loss_re, inner_loss_kl, outer_loss_re, outer_loss_kl
-    
-class MAML_VAE1(VAE):
-    def __init__(
-        self, 
-        input_dim, 
-        hidden_size, 
-        output_dim, 
-        data_names,
-        device=torch.device('cpu')
-    ) -> None:
-        super().__init__(input_dim, hidden_size, output_dim, device)
-        self.inner_lr = 3e-4
-        self.outer_lr = 1e-2
-        self.max_grad_norm = 0.25
-        self.data_names = data_names
 
-        theta_list = ['theta']
-        self.encoder_theta = dict(zip(theta_list, [None for _ in theta_list]))
-        self.decoder_theta = dict(zip(theta_list, [None for _ in theta_list]))
-
-        self.to(device)
-
-    def copy_ed_optim(self):
-        # 每次inner_update时执行, 问题是copy后, 各个task对应的旧的动量丢掉了?
-        self.copy_encoder = [deepcopy(self.encoder) for _ in self.data_names]
-        self.copy_decoder = [deepcopy(self.decoder) for _ in self.data_names]
-        self.copy_optimizer = [
-            Adam(params=list(e.parameters())+list(d.parameters()), lr=self.inner_lr)
-            for e, d in zip(self.copy_encoder, self.copy_decoder)
-        ]
-
-    def ed2theta(self):
-        self.encoder_theta['theta'] = parameters_to_vector(self.encoder.parameters())
-        self.decoder_theta['theta'] = parameters_to_vector(self.decoder.parameters())
-
-    def theta2ed(self):
-        vector_to_parameters(self.encoder_theta['theta'], self.encoder.parameters())
-        vector_to_parameters(self.decoder_theta['theta'], self.decoder.parameters())
-                
-    def check(self, x):
-        if isinstance(x, list):
-            return [self.check(x_i) for x_i in x]
-        return super().check(x)
-
-    def inner_encode(self, x):
-        x = self.check(x)
-        params = [encoder(x_i) for encoder, x_i in zip(self.copy_encoder, x)]
-        mu_ls = [torch.split(param, [self.output_dim, self.output_dim], dim=-1) for param in params]
-        mus = [mu_ls_i[0] for mu_ls_i in mu_ls]
-        sigmas = [mu_ls_i[1].exp() for mu_ls_i in mu_ls]
-        z = [self.rp_sample(mu, sigma) for mu, sigma in zip(mus, sigmas)]
-        return z, mus, sigmas
-
-    def inner_decode(self, z):
-        z = self.check(z)
-        x = [decoder(z_i) for decoder, z_i in zip(self.copy_decoder, z)]
-        return x
-
-    def inner_update(self, x):
-        # copy primitive model to model corresponding to tasks
-        self.copy_ed_optim()
-        x = self.check(x)
-        z, mus, sigmas = self.inner_encode(x)
-        x_re = self.inner_decode(z)
-        loss_re = [
-            torch.mean(torch.sum((x_re_i - x_i) ** 2, dim=-1), dim=0) for x_re_i, x_i in zip(x_re, x)
-        ]
-        loss_kl = [
-            self.kl_loss(mu, sigma) for mu, sigma in zip(mus, sigmas)
-        ]
-        loss = [loss_re_i + loss_kl_i for loss_re_i, loss_kl_i in zip(loss_re, loss_kl)]
-        for idx, (loss_i, optimizer) in enumerate(zip(loss, self.copy_optimizer)):
-            optimizer.zero_grad()
-            loss_i.backward()
-            torch.nn.utils.clip_grad_norm_(self.copy_encoder[idx].parameters(), self.max_grad_norm)
-            torch.nn.utils.clip_grad_norm_(self.copy_decoder[idx].parameters(), self.max_grad_norm)
-            optimizer.step()
-        return [loss_re_i.item() for loss_re_i in loss_re], [loss_kl_i.item() for loss_kl_i in loss_kl]
-        
-    def outer_update(self, x):
-        self.ed2theta()
-        x = self.check(x)
-        z, mus, sigmas = self.inner_encode(x)
-        x_re = self.inner_decode(z)
-        loss_re = [
-            torch.mean(torch.sum((x_re_i - x_i) ** 2, dim=-1), dim=0) for x_re_i, x_i in zip(x_re, x)
-        ]
-        loss_kl = [
-            self.kl_loss(mu, sigma) for mu, sigma in zip(mus, sigmas)
-        ]
-        loss = [loss_re_i + loss_kl_i for loss_re_i, loss_kl_i in zip(loss_re, loss_kl)]
-
-        grad_ethetap_vector = 0
-        grad_dthetap_vector = 0
-        for idx, (loss_i, copy_encoder, copy_decoder) in enumerate(zip(loss, self.copy_encoder, self.copy_decoder)):
-            '''
-            这里没有考虑关于theta的二阶梯度
-            '''
-            # encoder
-            grad_ethetap = torch.autograd.grad(loss_i, copy_encoder.parameters(), retain_graph=True)
-            maml_clip_grad_norm_(grad_ethetap, self.max_grad_norm)
-            grad_ethetap_vector += parameters_to_vector(grad_ethetap)
-            # decoder
-            grad_dthetap = torch.autograd.grad(loss_i, copy_decoder.parameters(), retain_graph=True)
-            maml_clip_grad_norm_(grad_dthetap, self.max_grad_norm)
-            grad_dthetap_vector += parameters_to_vector(grad_dthetap)
-
-        self.encoder_theta['theta'] -= self.outer_lr * (grad_ethetap_vector / (idx+1))
-        self.decoder_theta['theta'] -= self.outer_lr * (grad_dthetap_vector / (idx+1))
-        self.theta2ed()
-
-        return [loss_re_i.item() for loss_re_i in loss_re], [loss_kl_i.item() for loss_kl_i in loss_kl]
-
-    def update(self, inner_xs, outer_xs):
-        inner_loss_re, inner_loss_kl = self.inner_update(inner_xs)
-        outer_loss_re, outer_loss_kl = self.outer_update(outer_xs)
-        return inner_loss_re, inner_loss_kl, outer_loss_re, outer_loss_kl
-
-class MAML_VAE2(VAE):
+class Simple_MAML_VAE(VAE):
     def __init__(
         self, 
         input_dim, 
@@ -274,7 +157,8 @@ class MAML_VAE2(VAE):
 
 
     def linear(self, x, w, b, is_relu):
-        x = torch.matmul(x, w.transpose(0, 1)) + b
+        # x = torch.matmul(x, w.transpose(0, 1)) + b
+        x = F.linear(x, w, b)
         if is_relu:
             x = F.relu(x)
         return x

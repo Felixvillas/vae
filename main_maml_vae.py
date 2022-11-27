@@ -5,8 +5,9 @@ import torchvision
 from torchvision import datasets
 import os
 
-from maml_vae import MAML_VAE, MAML_VAE1, MAML_VAE2
+from maml_vae import My_MAML_VAE, Simple_MAML_VAE
 from tqdm import *
+from utils import get_args
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device('cpu')
 batch_size = 128
@@ -35,7 +36,7 @@ def load_data(*datas):
 
 
 if __name__ == "__main__":
-
+    args = get_args()
     m_data = datasets.MNIST(root="./data/MNIST", train=True, download=False)
     f_data = datasets.FashionMNIST(root="./data/FashionMNIST", train=True, download=False)
 
@@ -47,12 +48,12 @@ if __name__ == "__main__":
     # construct vae
     input_dim = datas_train[0].size(-1)
 
-    # Vae = MAML_VAE(input_dim, hidden_size=64, output_dim=4, data_names=data_names, device=device)
-    # low_root = 'zero'
-    # Vae = MAML_VAE1(input_dim, hidden_size=64, output_dim=4, data_names=data_names, device=device)
-    # low_root = 'one'
-    Vae = MAML_VAE2(input_dim, hidden_size=64, output_dim=4, data_names=data_names, device=device)
-    low_root = 'two'
+    vae_dict = {
+        0: [My_MAML_VAE, 'my_vae'],
+        1: [Simple_MAML_VAE, 'simple_vae']
+    }
+    Vae_class, low_root = vae_dict[args.maml_flag]
+    Vae = Vae_class(input_dim, hidden_size=64, output_dim=4, data_names=data_names, device=device)
 
     # train
     Vae.train()

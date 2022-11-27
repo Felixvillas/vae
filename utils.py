@@ -1,5 +1,6 @@
 import torch
 from torch.nn.utils.convert_parameters import _check_param_device
+import argparse
 
 from typing import Union, Iterable
 _tensor_or_tensors = Union[torch.Tensor, Iterable[torch.Tensor]]
@@ -48,3 +49,9 @@ def vector_to_parameters(vector, parameters):
                          .view_as(param).data)
 
         pointer += num_param
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--maml-flag", type=int, default=2)
+
+    return parser.parse_args()
